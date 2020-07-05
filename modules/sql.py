@@ -40,12 +40,15 @@ def sql_setup(logger, settings, action_or_audit):
     else:
         print('No Match')
         sys.exit()
-    connection_string = '{}://{}:{}@{}:{}/{}'.format(settings[DB_TYPE],
-                                                     settings[DB_USER],
-                                                     settings[DB_PWD],
-                                                     settings[DB_SERVER],
-                                                     settings[DB_PORT],
-                                                     settings[DB_NAME])
+    if settings[HEROKU_URL] is not None:
+        connection_string = settings[HEROKU_URL]
+    else:
+        connection_string = '{}://{}:{}@{}:{}/{}'.format(settings[DB_TYPE],
+                                                         settings[DB_USER],
+                                                         settings[DB_PWD],
+                                                         settings[DB_SERVER],
+                                                         settings[DB_PORT],
+                                                         settings[DB_NAME])
 
     engine = create_engine(connection_string)
     meta = MetaData()

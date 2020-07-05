@@ -299,6 +299,7 @@ def load_config_settings(logger, path_to_config_file, docker_enabled):
     if docker_enabled is True:
         settings = {
             API_TOKEN: docker_load_setting_api_access_token(logger, os.environ['API_TOKEN']),
+            HEROKU_URL: os.environ.get('HEROKU_POSTGRESQL_OLIVE_URL'),
             SSL_CERT: set_env_defaults('SSL_CERT', os.environ['SSL_CERT'], logger),
             SSL_VERIFY: set_env_defaults('SSL_VERIFY', os.environ['SSL_VERIFY'], logger),
             PROXY_HTTP: set_env_defaults('PROXY_HTTP', os.environ['PROXY_HTTP'], logger),
