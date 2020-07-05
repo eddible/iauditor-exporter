@@ -237,6 +237,8 @@ def set_env_defaults(name, env_var, logger):
             env_var = None
         else:
             env_var = 'false'
+    if env_var == 'None':
+        env_var = None
     print(name, ' set to ', env_var)
     return env_var
 
