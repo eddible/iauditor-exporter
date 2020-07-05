@@ -484,20 +484,22 @@ def parse_command_line_arguments(logger):
                                                              'Directory will be named iAuditor Audit Exports, and will '
                                                              'be placed in your current directory')
     args = parser.parse_args()
+    if not args.docker:
+        if args.config is None:
+            rename_config_sample(logger)
 
-    if args.config is None and not args.docker:
-        rename_config_sample(logger)
-
-    if args.config is not None:
-        config_filename = os.path.join('configs', args.config)
-        if os.path.isfile(config_filename):
+        if args.config is not None:
             config_filename = os.path.join('configs', args.config)
-            logger.debug(config_filename + ' passed as config argument')
+            if os.path.isfile(config_filename):
+                config_filename = os.path.join('configs', args.config)
+                logger.debug(config_filename + ' passed as config argument')
+            else:
+                logger.error(config_filename + ' is either missing or corrupt.')
+                sys.exit(1)
         else:
-            logger.error(config_filename + ' is either missing or corrupt.')
-            sys.exit(1)
+            config_filename = os.path.join('configs', DEFAULT_CONFIG_FILENAME)
     else:
-        config_filename = os.path.join('configs', DEFAULT_CONFIG_FILENAME)
+        config_filename = None
 
     export_formats = ['pdf']
     if args.format is not None and len(args.format) > 0:
