@@ -485,7 +485,7 @@ def parse_command_line_arguments(logger):
                                                              'be placed in your current directory')
     args = parser.parse_args()
 
-    if args.config is None:
+    if args.config is None and not args.docker:
         rename_config_sample(logger)
 
     if args.config is not None:
