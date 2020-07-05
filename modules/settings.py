@@ -484,7 +484,8 @@ def parse_command_line_arguments(logger):
                                                              'Directory will be named iAuditor Audit Exports, and will '
                                                              'be placed in your current directory')
     args = parser.parse_args()
-    if not args.docker:
+    print(args)
+    if args.docker is None:
         if args.config is None:
             rename_config_sample(logger)
 
@@ -516,6 +517,7 @@ def parse_command_line_arguments(logger):
 
     loop_enabled = True if args.loop is not None else False
     docker_enabled = True if args.docker is not None else False
+    print(docker_enabled)
 
     return config_filename, export_formats, args.list_preferences, loop_enabled, docker_enabled
 
