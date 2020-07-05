@@ -223,6 +223,8 @@ def get_filename_item_id(logger, config_settings):
 
 def set_env_defaults(name, env_var, logger):
     # if env_var is None or '':
+    if name == 'DB_SERVER' and env_var == 'heroku':
+        return os.environ['DATABASE_URL']
     if not env_var:
         if name == 'CONFIG_NAME':
             logger.error('You must set the CONFIG_NAME')
