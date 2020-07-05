@@ -419,20 +419,22 @@ def configure(logger, path_to_config_file, export_formats, docker_enabled):
                                  certificate_settings=config_settings[SSL_CERT],
                                  ssl_verify=config_settings[SSL_VERIFY])
 
-    if config_settings[EXPORT_PATH] is not None:
-        if config_settings[CONFIG_NAME] is not None:
-            create_directory_if_not_exists(logger, os.path.join(config_settings[EXPORT_PATH]))
+    if not docker_enabled:
+        if config_settings[EXPORT_PATH] is not None:
+            if config_settings[CONFIG_NAME] is not None:
+                create_directory_if_not_exists(logger, os.path.join(config_settings[EXPORT_PATH]))
+            else:
+                logger.error("You must set the config_name in your config file before continuing.")
+                sys.exit()
+
         else:
-            logger.error("You must set the config_name in your config file before continuing.")
-            sys.exit()
-    else:
-        logger.info('No export path was found in ' + path_to_config_file + ', defaulting to /exports')
-        config_settings[EXPORT_PATH] = os.path.join(os.getcwd(), 'exports')
-        if config_settings[CONFIG_NAME] is not None:
-            create_directory_if_not_exists(logger, os.path.join(config_settings[EXPORT_PATH]))
-        else:
-            logger.error("You must set the config_name in your config file before continuing.")
-            sys.exit()
+            logger.info('No export path was found in ' + path_to_config_file + ', defaulting to /exports')
+            config_settings[EXPORT_PATH] = os.path.join(os.getcwd(), 'exports')
+            if config_settings[CONFIG_NAME] is not None:
+                create_directory_if_not_exists(logger, os.path.join(config_settings[EXPORT_PATH]))
+            else:
+                logger.error("You must set the config_name in your config file before continuing.")
+                sys.exit()
 
     return sc_client, config_settings
 
