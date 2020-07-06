@@ -24,9 +24,9 @@ def set_table(table, merge):
         AuditID = Column(String(100), primary_key=True, autoincrement=False)
         ItemID = Column(String(100), primary_key=True, autoincrement=False)
         if merge is False:
-            DatePK = Column(String(20), primary_key=True, autoincrement=False)
+            DatePK = Column(BigInteger, primary_key=True, autoincrement=False)
         else:
-            DatePK = Column(String(20))
+            DatePK = Column(BigInteger)
         ResponseID = Column(Text())
         ParentID = Column(String(100))
         AuditOwner = Column(Text())

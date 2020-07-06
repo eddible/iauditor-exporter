@@ -1,3 +1,5 @@
+import datetime
+
 import pandas as pd
 import numpy as np
 
@@ -36,12 +38,13 @@ def sql_setup(logger, settings, action_or_audit):
             table = settings[ACTIONS_TABLE]
         else:
             table = 'iauditor_actions_data'
-        ActionsDatabase = set_actions_table(table, actions_merge)
+        Database = set_actions_table(table, actions_merge)
     else:
         print('No Match')
         sys.exit()
-    if settings[HEROKU_URL] is not None:
-        connection_string = settings[HEROKU_URL]
+    if HEROKU_URL in settings:
+        if settings[HEROKU_URL] is not None:
+            connection_string = settings[HEROKU_URL]
     else:
         connection_string = '{}://{}:{}@{}:{}/{}'.format(settings[DB_TYPE],
                                                          settings[DB_USER],
@@ -54,57 +57,40 @@ def sql_setup(logger, settings, action_or_audit):
     meta = MetaData()
     logger.debug('Making connection to ' + str(engine))
     if action_or_audit == 'audit':
-        if not engine.dialect.has_table(engine, settings[SQL_TABLE], schema=settings[DB_SCHEMA]):
-            logger.info(settings[SQL_TABLE] + ' not Found.')
-            if settings[ALLOW_TABLE_CREATION] == 'true':
+        db_setting = settings[SQL_TABLE]
+    else:
+        db_setting = settings[ACTIONS_TABLE]
+    print(db_setting)
+    if not engine.dialect.has_table(engine, db_setting, schema=settings[DB_SCHEMA]):
+        logger.info(db_setting + ' not Found.')
+        if settings[ALLOW_TABLE_CREATION] == 'true':
+            Database.__table__.create(engine)
+        elif settings[ALLOW_TABLE_CREATION] == 'false':
+            logger.error('You need to create the table {} in your database before continuing. If you want the '
+                         'script '
+                         'to do it for you, set ALLOW_TABLE_CREATION to '
+                         'True in your config file'.format(db_setting))
+            sys.exit()
+        else:
+            validation = input('It doesn\'t look like a table called {} exists on your server. Would you like the '
+                               'script to try and create the table for you now? (If you\'re using '
+                               'docker, you need to set APPROVE_TABLE_CREATION to true in your config file) '
+                               '(y/n)  '.format(db_setting))
+            validation = validation.lower()
+            if validation.startswith('y'):
                 Database.__table__.create(engine)
-            elif settings[ALLOW_TABLE_CREATION] == 'false':
-                logger.error('You need to create the table {} in your database before continuing. If you want the '
-                             'script '
-                             'to do it for you, set ALLOW_TABLE_CREATION to '
-                             'True in your config file'.format(settings[SQL_TABLE]))
-                sys.exit()
             else:
-                validation = input('It doesn\'t look like a table called {} exists on your server. Would you like the '
-                                   'script to try and create the table for you now? (If you\'re using '
-                                   'docker, you need to set APPROVE_TABLE_CREATION to true in your config file) '
-                                   '(y/n)  '.format(settings[SQL_TABLE]))
-                validation = validation.lower()
-                if validation.startswith('y'):
-                    Database.__table__.create(engine)
-                else:
-                    logger.info('Stopping the script. Please either re-run the script or create your table manually.')
-                    sys.exit()
-        setup = 'complete'
-        logger.info('Successfully setup Database and connection')
-    else:
-        if not engine.dialect.has_table(engine, settings[ACTIONS_TABLE], schema=settings[DB_SCHEMA]):
-            logger.info(settings[ACTIONS_TABLE] + ' not Found.')
-            if settings[ALLOW_TABLE_CREATION] == 'true':
-                ActionsDatabase.__table__.create(engine)
-            elif settings[ALLOW_TABLE_CREATION] == 'false':
-                logger.error('You need to create the table {} in your database before continuing. If you want the '
-                             'script to do it for you, set ALLOW_TABLE_CREATION to True in your '
-                             'config file'.format(settings[SQL_TABLE]))
+                logger.info('Stopping the script. Please either re-run the script or create your table manually.')
                 sys.exit()
-            else:
-                validation = input('It doesn\'t look like a table called {} exists on your server. Would you like the '
-                                   'script to try and create the table for you now? (If you\'re using '
-                                   'docker, you need to set APPROVE_TABLE_CREATION to true in your config file) '
-                                   '(y/n)  '.format(settings[ACTIONS_TABLE]))
-                validation = validation.lower()
-                if validation.startswith('y'):
-                    ActionsDatabase.__table__.create(engine)
-                else:
-                    logger.info('Stopping the script. Please either re-run the script or create your table manually.')
-                    sys.exit()
-        setup = 'complete'
-        logger.info('Successfully setup Database and connection')
+    setup = 'complete'
+    logger.info('Successfully setup Database and connection')
 
-    if action_or_audit == 'audit':
-        return setup, engine, connection_string, meta, Database
-    else:
-        return setup, engine, connection_string, meta, ActionsDatabase
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    return setup, session, Database
+
+    #return setup, engine, connection_string, meta, Database
 
 
 def export_audit_sql(logger, settings, audit_json, get_started):
@@ -115,8 +101,9 @@ def export_audit_sql(logger, settings, audit_json, get_started):
     :param audit_json:  Audit JSON
     :get_started:       Tuple containing settings
     """
-    engine = get_started[1]
-    database = get_started[4]
+    # engine = get_started[1]
+    database = get_started[2]
+    session = get_started[1]
 
     csv_exporter = csvExporter.CsvExporter(audit_json, settings[EXPORT_INACTIVE_ITEMS_TO_CSV])
     df = csv_exporter.audit_table
@@ -128,22 +115,26 @@ def export_audit_sql(logger, settings, audit_json, get_started):
         df['DateStarted'] = pd.to_datetime(df['DateStarted'])
         df['DateCompleted'] = pd.to_datetime(df['DateCompleted'])
         df['DateModified'] = pd.to_datetime(df['DateModified'])
-        df['ConductedOn'] = pd.to_datetime(df['ConductedOn'])
+        try:
+            df['ConductedOn'] = pd.to_datetime(df['ConductedOn'])
+        except pd.errors.OutOfBoundsDatetime:
+            df['ConductedOn'] = None
+
     df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, np.nan, inplace=True)
-    df.fillna(0, inplace=True)
+    # df.fillna(0, inplace=True)
     df['SortingIndex'] = range(1, len(df) + 1)
     df_dict = df.to_dict(orient='records')
-    Session = sessionmaker(bind=engine)
-    session = Session()
 
     try:
         session.bulk_insert_mappings(database, df_dict)
     except KeyboardInterrupt:
         logger.warning('Interrupted by user, exiting.')
         session.rollback()
+        session.close()
         sys.exit(0)
     except OperationalError as ex:
         session.rollback()
+        session.close()
         logger.warning('Something went wrong. Here are the details: {}'.format(ex))
     except IntegrityError as ex:
         # If the bulk insert fails, we do a slower merge
@@ -154,6 +145,22 @@ def export_audit_sql(logger, settings, audit_json, get_started):
             session.merge(row_to_dict)
         logger.debug('Row successfully updated.')
     session.commit()
+
+
+def end_session(session):
+    session.close()
+
+
+def query_max_last_modified(session, database):
+    qry = session.query(func.max(database.DateModified).label("max"))
+    res = qry.one()
+    if not res.max:
+        return '2000-01-01T00:00:00.000Z'
+    else:
+        new_last_successful = res.max + datetime.timedelta(0, 10)
+        new_last_successful = str(new_last_successful)
+        print(new_last_successful)
+        return new_last_successful
 
 
 def save_exported_actions_to_db(logger, actions_array, settings, get_started):

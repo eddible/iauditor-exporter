@@ -13,7 +13,7 @@ try:
     from modules.media import check_if_media_sync_offset_satisfied, export_audit_media
     from modules.other import show_preferences_and_exit
     from modules.settings import parse_export_filename, parse_command_line_arguments, configure
-    from modules.sql import sql_setup
+    from modules.sql import sql_setup, end_session, query_max_last_modified
     from modules.web_report_links import export_audit_web_report_link
 
 except ImportError as e:
@@ -56,7 +56,13 @@ def sync_exports(logger, settings, sc_client):
             set(settings[EXPORT_FORMATS]) & {'pdf', 'docx', 'csv', 'media', 'web-report-link', 'json', 'sql', 'pickle',
                                              'doc_creation'}):
         return
-    last_successful = get_last_successful(logger, settings[CONFIG_NAME])
+    if 'sql' in settings[EXPORT_FORMATS]:
+        get_started = sql_setup(logger, settings, 'audit')
+        last_successful = query_max_last_modified(get_started[1], get_started[2])
+        # print(last_successful)
+        # last_successful = get_last_successful(logger, settings[CONFIG_NAME])
+    else:
+        last_successful = get_last_successful(logger, settings[CONFIG_NAME])
     if settings[TEMPLATE_IDS] is not None:
         if settings[TEMPLATE_IDS].endswith('.txt'):
             file = settings[TEMPLATE_IDS].strip()
@@ -83,16 +89,12 @@ def sync_exports(logger, settings, sc_client):
                 get_started = sql_setup(logger, settings, 'audit')
             elif export_format in ['pickle']:
                 get_started = ['complete', 'complete']
-                # if export_format == 'pickle' and os.path.isfile('{}.pkl'.format(settings[SQL_TABLE])):
-                #     logger.error(
-                #         'The Pickle file already exists. Appending to Pickles isn\'t currently possible, please '
-                #         'remove {}.pkl and try again.'.format(
-                #             settings[SQL_TABLE]))
-                #     sys.exit(0)
         for audit in list_of_audits['audits']:
             logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
             process_audit(logger, settings, sc_client, audit, get_started)
             export_count += 1
+        if get_started != 'ignored':
+            end_session(get_started[1])
 
 
 def process_audit(logger, settings, sc_client, audit, get_started):
