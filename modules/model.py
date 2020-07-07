@@ -1,10 +1,7 @@
 from sqlalchemy import Column, String, Integer, Float, DateTime, Boolean, BigInteger, Text
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
 
 
-def set_table(table, merge):
+def set_table(table, merge, Base):
     class Database(Base):
         __tablename__ = table
         SortingIndex = Column(Integer)
@@ -110,7 +107,7 @@ SQL_HEADER_ROW = [
 ]
 
 
-def set_actions_table(table, merge):
+def set_actions_table(table, merge, Base):
     class ActionsDatabase(Base):
         __tablename__ = table
         id = Column(Integer, primary_key=False, autoincrement=True)

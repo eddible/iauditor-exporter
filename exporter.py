@@ -5,7 +5,7 @@ import time
 import sys
 
 try:
-    from modules.exporters import export_audit_pdf_word, export_audit_json, export_audit_pandas, export_audit_csv, \
+    from modules.exporters import export_audit_pdf_word, export_audit_json, export_audit_csv, \
         export_actions
     from modules.global_variables import *
     from modules.last_successful import get_last_successful, update_sync_marker_file
@@ -13,7 +13,7 @@ try:
     from modules.media import check_if_media_sync_offset_satisfied, export_audit_media
     from modules.other import show_preferences_and_exit
     from modules.settings import parse_export_filename, parse_command_line_arguments, configure
-    from modules.sql import sql_setup, end_session, query_max_last_modified
+    from modules.sql import sql_setup, end_session, query_max_last_modified, export_audit_sql
     from modules.web_report_links import export_audit_web_report_link
 
 except ImportError as e:
@@ -76,6 +76,11 @@ def sync_exports(logger, settings, sc_client):
             ids_to_search = [settings[TEMPLATE_IDS][0]]
         list_of_audits = sc_client.discover_audits(modified_after=last_successful, template_id=ids_to_search,
                                                    completed=completed_setting, archived=archived_setting)
+    elif any(elem in ['sql', 'csv', 'json'] for elem in settings[EXPORT_FORMATS]):
+        print('Bulk download goes here')
+        list_of_audits = sc_client.discover_audits(modified_after=last_successful, completed=completed_setting,
+                                                   archived=archived_setting)
+
     else:
         list_of_audits = sc_client.discover_audits(modified_after=last_successful, completed=completed_setting,
                                                    archived=archived_setting)
@@ -124,9 +129,9 @@ def process_audit(logger, settings, sc_client, audit, get_started):
             export_audit_json(logger, settings, audit_json, export_filename)
         elif export_format == 'csv':
             export_audit_csv(settings, audit_json)
-        elif export_format in ['sql', 'pickle']:
+        elif export_format in ['sql']:
             if get_started[0] == 'complete':
-                export_audit_pandas(logger, settings, audit_json, get_started)
+                export_audit_sql(logger, settings, audit_json, get_started)
             elif get_started[0] != 'complete':
                 logger.error('Something went wrong connecting to the database, please check your settings.')
                 sys.exit(1)

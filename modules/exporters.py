@@ -65,30 +65,30 @@ def export_audit_json(logger, settings, audit_json, export_filename):
     save_exported_document(logger, settings[EXPORT_PATH], export_doc.encode(), export_filename, export_format)
 
 
-def export_audit_pandas(logger, settings, audit_json, get_started):
-    """
-    Save audit to a database.
-    :param logger:      The logger
-    :param settings:    Settings from command line and configuration file
-    :param audit_json:  Audit JSON
-
-    Args:
-        get_started: A tuple containing database connection settings
-    """
-
-    for export_format in settings[EXPORT_FORMATS]:
-        if export_format == 'sql':
-            export_audit_sql(logger, settings, audit_json, get_started)
-
-        elif export_format == 'pickle':
-            # export_audit_doc_creation(logger, settings, audit_json, 'docx', 'test.docx', media_list=[])
-            logger.info('Writing to Pickle')
-            csv_exporter = csvExporter.CsvExporter(audit_json, settings[EXPORT_INACTIVE_ITEMS_TO_CSV])
-            df = csv_exporter.audit_table
-            df = pd.DataFrame.from_records(df, columns=SQL_HEADER_ROW)
-            df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, np.nan, inplace=True)
-            df.fillna(value={'Latitude': 0, 'Longitude': 0}, inplace=True)
-            df.to_pickle('{}.pkl'.format(settings[SQL_TABLE]))
+# def export_audit_pandas(logger, settings, audit_json, get_started):
+#     """
+#     Save audit to a database.
+#     :param logger:      The logger
+#     :param settings:    Settings from command line and configuration file
+#     :param audit_json:  Audit JSON
+#
+#     Args:
+#         get_started: A tuple containing database connection settings
+#     """
+#
+#     for export_format in settings[EXPORT_FORMATS]:
+#         if export_format == 'sql':
+#             export_audit_sql(logger, settings, audit_json, get_started)
+#
+#         elif export_format == 'pickle':
+#             # export_audit_doc_creation(logger, settings, audit_json, 'docx', 'test.docx', media_list=[])
+#             logger.info('Writing to Pickle')
+#             csv_exporter = csvExporter.CsvExporter(audit_json, settings[EXPORT_INACTIVE_ITEMS_TO_CSV])
+#             df = csv_exporter.audit_table
+#             df = pd.DataFrame.from_records(df, columns=SQL_HEADER_ROW)
+#             df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, np.nan, inplace=True)
+#             df.fillna(value={'Latitude': 0, 'Longitude': 0}, inplace=True)
+#             df.to_pickle('{}.pkl'.format(settings[SQL_TABLE]))
 
 
 def export_audit_csv(settings, audit_json):

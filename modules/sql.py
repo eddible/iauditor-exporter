@@ -6,6 +6,7 @@ import numpy as np
 from sqlalchemy import *
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 
 import csvExporter
 from modules.actions import transform_action_object_to_list
@@ -25,6 +26,7 @@ def sql_setup(logger, settings, action_or_audit):
     else:
         actions_merge = False
 
+    Base = declarative_base()
     Base.metadata.clear()
 
     if action_or_audit == 'audit':
@@ -32,16 +34,17 @@ def sql_setup(logger, settings, action_or_audit):
             table = settings[SQL_TABLE]
         else:
             table = 'iauditor_data'
-        Database = set_table(table, merge)
+        Database = set_table(table, merge, Base)
     elif action_or_audit == 'actions':
         if settings[ACTIONS_TABLE] is not None:
             table = settings[ACTIONS_TABLE]
         else:
             table = 'iauditor_actions_data'
-        Database = set_actions_table(table, actions_merge)
+        Database = set_actions_table(table, actions_merge, Base)
     else:
         print('No Match')
         sys.exit()
+
     if HEROKU_URL in settings:
         if settings[HEROKU_URL] is not None:
             connection_string = settings[HEROKU_URL]
@@ -60,7 +63,6 @@ def sql_setup(logger, settings, action_or_audit):
         db_setting = settings[SQL_TABLE]
     else:
         db_setting = settings[ACTIONS_TABLE]
-    print(db_setting)
     if not engine.dialect.has_table(engine, db_setting, schema=settings[DB_SCHEMA]):
         logger.info(db_setting + ' not Found.')
         if settings[ALLOW_TABLE_CREATION] == 'true':
@@ -101,7 +103,6 @@ def export_audit_sql(logger, settings, audit_json, get_started):
     :param audit_json:  Audit JSON
     :get_started:       Tuple containing settings
     """
-    # engine = get_started[1]
     database = get_started[2]
     session = get_started[1]
 
@@ -110,18 +111,21 @@ def export_audit_sql(logger, settings, audit_json, get_started):
     df = pd.DataFrame.from_records(df, columns=SQL_HEADER_ROW)
     df['DatePK'] = pd.to_datetime(df['DateModified']).values.astype(np.int64) // 10 ** 6
     if settings[DB_TYPE].startswith(('mysql', 'postgres')):
-        df.replace({'DateCompleted': ''}, '1900-01-01 00:00:00', inplace=True)
-        df.replace({'ConductedOn': ''}, '1900-01-01 00:00:00', inplace=True)
-        df['DateStarted'] = pd.to_datetime(df['DateStarted'])
-        df['DateCompleted'] = pd.to_datetime(df['DateCompleted'])
-        df['DateModified'] = pd.to_datetime(df['DateModified'])
-        try:
-            df['ConductedOn'] = pd.to_datetime(df['ConductedOn'])
-        except pd.errors.OutOfBoundsDatetime:
-            df['ConductedOn'] = None
+        df.replace({'DateCompleted': ''}, np.datetime64(None), inplace=True)
+        df.replace({'ConductedOn': ''}, np.datetime64(None), inplace=True)
+        empty_value = np.nan
+        # df['DateStarted'] = pd.to_datetime(df['DateStarted'])
+        # df['DateCompleted'] = pd.to_datetime(df['DateCompleted'])
+        # df['DateModified'] = pd.to_datetime(df['DateModified'])
+        # try:
+        #     df['ConductedOn'] = pd.to_datetime(df['ConductedOn'])
+        # except pd.errors.OutOfBoundsDatetime:
+        #     df['ConductedOn'] = None
+    else:
+        empty_value = None
 
-    df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, np.nan, inplace=True)
-    # df.fillna(0, inplace=True)
+    # df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, empty_value, inplace=True)
+    df.replace(r'^\s*$', empty_value, regex=True, inplace=True)
     df['SortingIndex'] = range(1, len(df) + 1)
     df_dict = df.to_dict(orient='records')
 
