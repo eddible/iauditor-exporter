@@ -17,6 +17,7 @@
       "value": true
     },
     "API_TOKEN": {
+      "description": "Your API Token from iAuditor",
       "value": "Your API Token"
     },
     "CONFIG_NAME": {
@@ -35,6 +36,7 @@
       "value": "None"
     },
     "DB_SERVER": {
+      "description": "Leave as 'heroku' if using Heroku database.",
       "value": "heroku"
     },
     "DB_TYPE": {
@@ -48,9 +50,6 @@
     },
     "EXPORT_COMPLETED": {
       "value": "both"
-    },
-    "API_TOKEN": {
-      "value": "Your API Token"
     },
     "MEDIA_SYNC_OFFSET_IN_SECONDS": {
       "value": 900
