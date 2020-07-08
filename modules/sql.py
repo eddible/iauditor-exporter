@@ -110,25 +110,31 @@ def export_audit_sql(logger, settings, audit_json, get_started):
     df = csv_exporter.audit_table
     df = pd.DataFrame.from_records(df, columns=SQL_HEADER_ROW)
     df['DatePK'] = pd.to_datetime(df['DateModified']).values.astype(np.int64) // 10 ** 6
-    if settings[DB_TYPE].startswith(('mysql', 'postgres')):
+    if settings[DB_TYPE].startswith('postgres'):
         df.replace({'DateCompleted': ''}, np.datetime64(None), inplace=True)
         df.replace({'ConductedOn': ''}, np.datetime64(None), inplace=True)
         empty_value = np.nan
-        # df['DateStarted'] = pd.to_datetime(df['DateStarted'])
-        # df['DateCompleted'] = pd.to_datetime(df['DateCompleted'])
-        # df['DateModified'] = pd.to_datetime(df['DateModified'])
-        # try:
-        #     df['ConductedOn'] = pd.to_datetime(df['ConductedOn'])
-        # except pd.errors.OutOfBoundsDatetime:
-        #     df['ConductedOn'] = None
+        empty_score = empty_value
+    elif settings[DB_TYPE].startswith('mysql'):
+        df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, 0.0, inplace=True)
+        empty_value = '1970-01-01T00:00:01'
+        df.replace({'DateCompleted': ''}, empty_value, inplace=True)
+        df.replace({'ConductedOn': ''}, empty_value, inplace=True)
+        df['DateStarted'] = pd.to_datetime(df['DateStarted'])
+        df['DateCompleted'] = pd.to_datetime(df['DateCompleted'])
+        df['DateModified'] = pd.to_datetime(df['DateModified'])
+        df['ConductedOn'] = pd.to_datetime(df['ConductedOn'], format='%Y-%m-%d %H:%M:%S', utc=False)
+        df['ConductedOn'] = df['ConductedOn'].dt.tz_localize(None)
+        empty_value = None
+        empty_score = 0.0
     else:
         empty_value = None
+        empty_score = empty_value
 
-    # df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, empty_value, inplace=True)
+    df.replace({'ItemScore': '', 'ItemMaxScore': '', 'ItemScorePercentage': ''}, empty_score, inplace=True)
     df.replace(r'^\s*$', empty_value, regex=True, inplace=True)
     df['SortingIndex'] = range(1, len(df) + 1)
     df_dict = df.to_dict(orient='records')
-
     try:
         session.bulk_insert_mappings(database, df_dict)
     except KeyboardInterrupt:
