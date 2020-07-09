@@ -19,6 +19,8 @@ from multiprocessing.dummy import Pool as ThreadPool
 import requests
 from getpass import getpass
 
+from tqdm import tqdm
+
 DEFAULT_EXPORT_FORMAT = 'PDF'
 GUID_PATTERN = '[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$'
 HTTP_USER_AGENT_ID = 'safetyculture-python-sdk'
@@ -44,7 +46,6 @@ def get_user_api_token(logger):
     else:
         logger.error('An error occurred calling ' + generate_token_url + ': ' + str(response.json()))
         return None
-
 
 class SafetyCulture:
     def __init__(self, api_token, proxy_settings=None, certificate_settings=None, ssl_verify=None):
@@ -105,25 +106,34 @@ class SafetyCulture:
             logger.error('No valid API token parsed! Exiting.')
             sys.exit(1)
 
-    def raise_pool(self, list_of_audits):
+    @staticmethod
+    def chunks(lst, n):
+        """Yield successive n-sized chunks from lst."""
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
+
+    def raise_pool(self, list_of_audits, logger):
         # Establish the Pool
-        pool = ThreadPool(8)
+        pool = ThreadPool(processes=4)
         # self.current_time = time.time()
-        pool.map(self.process_audit, list_of_audits)
+        logger.info(f'Downloading {len(list_of_audits)} inspections, hang tight...')
+        if len(list_of_audits) > 500:
+            logger.info('We need to download more than 500 inspections so going to do it in chunks to avoid hitting the '
+                        'API limits.')
+            for chunk in self.chunks(list_of_audits, 500):
+                list(tqdm(pool.imap(self.process_audit, chunk), total=len(chunk)))
+        else:
+            list(tqdm(pool.imap(self.process_audit, list_of_audits), total=len(list_of_audits)))
         pool.close()
         pool.join()
 
-        return self.L
+        return list(self.L)
 
     def process_audit(self, audit_id):
         # Appends downloaded audits to a shared list (L)
-        print('Downloading ', audit_id)
-        # time.sleep(0.1)
-        # time_now = time.time()
-        # time_elapsed = time_now - self.current_time
-        # print(time_elapsed)
+        audit_id = audit_id['audit_id']
         downloaded_audit = self.get_audit(audit_id)
-        print('Finished downloading ', audit_id)
+        # print('Finished downloading ', audit_id)
         self.L.append(downloaded_audit)
 
     def authenticated_request_get(self, url):
@@ -221,10 +231,14 @@ class SafetyCulture:
                 self.log_critical_error(ex, 'An error happened trying to create ' + path)
                 raise
 
-    def discover_audits(self, template_id=None, modified_after=None, completed=True, archived=False):
+    def discover_audits(self, template_id=None, modified_after=None, completed=True,
+                        archived=False, backlog=[], search_url=None):
         """
         Return IDs of all completed audits if no parameters are passed, otherwise restrict search
         based on parameter values
+        :param search_url:
+        :param archived:
+        :param backlog:
         :param template_id:     Restrict discovery to this template_id
         :param modified_after:  Restrict discovery to audits modified after this UTC timestamp
         :param completed:       Restrict discovery to audits marked as completed, default to True
@@ -234,7 +248,6 @@ class SafetyCulture:
         logger = logging.getLogger('sp_logger')
 
         last_modified = modified_after if modified_after is not None else '2000-01-01T00:00:00.000Z'
-
         search_url = self.audit_url + 'search?field=audit_id&field=modified_at&order=asc&modified_after=' \
                      + last_modified
         log_string = '\nInitiating audit_discovery with the parameters: ' + '\n'
@@ -272,6 +285,18 @@ class SafetyCulture:
         log_message = 'on audit_discovery: ' + number_discovered + ' discovered using ' + search_url
 
         self.log_http_status(response.status_code, log_message)
+
+        if 'total' in result:
+            print('Total ', result['total'])
+            if int(result['total']) > 1000 or backlog is not None:
+                backlog.extend(result['audits'])
+                print('Backlog Length ', len(backlog))
+                if result['audits']:
+                    new_modified_after = result['audits'][len(result['audits'])-1]['modified_at']
+                    self.discover_audits(template_id=template_id, completed=completed,
+                                         archived=archived, modified_after=new_modified_after, backlog=backlog)
+                result = {"count": len(backlog), "total": len(backlog), "audits": backlog}
+
         return result
 
     def discover_templates(self, modified_after=None, modified_before=None):
@@ -503,6 +528,12 @@ class SafetyCulture:
         response = self.authenticated_request_get(self.audit_url + audit_id)
         result = self.parse_json(response.content) if response.status_code == requests.codes.ok else None
         log_message = 'on GET for ' + audit_id
+        headers = response.headers
+        if 'x-rate-limit-remaining' in headers:
+            if int(headers['x-rate-limit-remaining']) < 100:
+                print('About to hit the rate limit, pausing for a minute')
+                time.sleep(60)
+                self.get_audit(audit_id)
 
         self.log_http_status(response.status_code, log_message)
         return result

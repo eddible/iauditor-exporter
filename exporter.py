@@ -76,11 +76,6 @@ def sync_exports(logger, settings, sc_client):
             ids_to_search = [settings[TEMPLATE_IDS][0]]
         list_of_audits = sc_client.discover_audits(modified_after=last_successful, template_id=ids_to_search,
                                                    completed=completed_setting, archived=archived_setting)
-    elif any(elem in ['sql', 'csv', 'json'] for elem in settings[EXPORT_FORMATS]):
-        print('Bulk download goes here')
-        list_of_audits = sc_client.discover_audits(modified_after=last_successful, completed=completed_setting,
-                                                   archived=archived_setting)
-
     else:
         list_of_audits = sc_client.discover_audits(modified_after=last_successful, completed=completed_setting,
                                                    archived=archived_setting)
@@ -89,12 +84,15 @@ def sync_exports(logger, settings, sc_client):
         export_count = 1
         export_total = list_of_audits['total']
         get_started = 'ignored'
+        audits_to_process = list_of_audits['audits']
         for export_format in settings[EXPORT_FORMATS]:
+            if export_format in ['sql', 'csv']:
+                audits_to_process = sc_client.raise_pool(list_of_audits['audits'], logger)
             if export_format == 'sql':
                 get_started = sql_setup(logger, settings, 'audit')
             elif export_format in ['pickle']:
                 get_started = ['complete', 'complete']
-        for audit in list_of_audits['audits']:
+        for audit in audits_to_process:
             logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
             process_audit(logger, settings, sc_client, audit, get_started)
             export_count += 1
@@ -115,7 +113,10 @@ def process_audit(logger, settings, sc_client, audit, get_started):
         return
     audit_id = audit['audit_id']
     logger.info('downloading ' + audit_id)
-    audit_json = sc_client.get_audit(audit_id)
+    if get_started != 'ignored':
+        audit_json = audit
+    else:
+        audit_json = sc_client.get_audit(audit_id)
     template_id = audit_json['template_id']
     preference_id = None
     if settings[PREFERENCES] is not None and template_id in settings[PREFERENCES].keys():

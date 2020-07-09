@@ -169,6 +169,7 @@ def query_max_last_modified(session, database):
     else:
         new_last_successful = res.max + datetime.timedelta(0, 10)
         new_last_successful = str(new_last_successful)
+        # new_last_successful = str(res.max)
         print(new_last_successful)
         return new_last_successful
 
