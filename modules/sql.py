@@ -11,8 +11,30 @@ from sqlalchemy.ext.declarative import declarative_base
 import csvExporter
 from modules.actions import transform_action_object_to_list
 from modules.global_variables import *
-from modules.last_successful import get_last_successful_actions_export
 from modules.model import *
+
+
+def test_sql_settings(logger, settings):
+    Base = declarative_base()
+    Base.metadata.clear()
+    connection_string = '{}://{}:{}@{}:{}/{}'.format(settings['database_type'],
+                                                         settings['database_user'],
+                                                         settings['database_pwd'],
+                                                         settings['database_server'],
+                                                         settings['database_port'],
+                                                         settings['database_name'])
+
+    engine = create_engine(connection_string, pool_pre_ping=True)
+    logger.info('Attempting to connect to database...')
+    try:
+        conn = engine.connect()
+        results = conn.execute('SELECT 1')
+        logger.info('Connected successfully.')
+        conn.close()
+        return True
+    except:
+        logger.warning('Unable to connect to database')
+        return False
 
 
 def sql_setup(logger, settings, action_or_audit):
@@ -169,8 +191,6 @@ def query_max_last_modified(session, database):
     else:
         new_last_successful = res.max + datetime.timedelta(0, 10)
         new_last_successful = str(new_last_successful)
-        # new_last_successful = str(res.max)
-        print(new_last_successful)
         return new_last_successful
 
 
@@ -186,7 +206,8 @@ def save_exported_actions_to_db(logger, actions_array, settings, get_started):
     actions_db = get_started[4]
 
     if not actions_array:
-        logger.info('No actions returned after ' + get_last_successful_actions_export(logger, settings[CONFIG_NAME]))
+        # logger.info('No actions returned after ' + get_last_successful_actions_export(logger, settings[CONFIG_NAME]))
+        logger.info('No actions returned.')
         return
     logger.info('Exporting ' + str(len(actions_array)) + ' actions')
     Session = sessionmaker(bind=engine)

@@ -1,12 +1,21 @@
 import argparse
 import re
+
+import questionary as questionary
 import yaml
+from questionary import Separator
 from yaml.scanner import ScannerError
 
 from modules.global_variables import *
 from modules.logger import log_critical_error, create_directory_if_not_exists
 # from safetypy import safetypy as sp
 import modules.safetypy as sp
+from modules.sql import test_sql_settings
+
+from pprint import pp
+from rich import print, box
+from rich.panel import Panel
+
 
 def load_setting_api_access_token(logger, config_settings):
     """
@@ -229,13 +238,13 @@ def set_env_defaults(name, env_var, logger):
         if name == 'CONFIG_NAME':
             logger.error('You must set the CONFIG_NAME')
             sys.exit()
-        if name == 'DB_SCHEMA':
+        elif name == 'DB_SCHEMA':
             env_var = 'dbo'
-        if name.startswith('DB_'):
+        elif name.startswith('DB_'):
             env_var = None
-        if name == 'SQL_TABLE':
+        elif name == 'SQL_TABLE':
             env_var = None
-        if name == 'TEMPLATE_IDS':
+        elif name == 'TEMPLATE_IDS':
             env_var = None
         else:
             env_var = 'false'
@@ -284,7 +293,7 @@ def load_actions_table(actions_table_name):
         return actions_table_name
 
 
-def load_config_settings(logger, path_to_config_file, docker_enabled):
+def load_config_settings(logger, path_to_config_file, docker_enabled=False):
     """
     Load config settings from config file
 
@@ -495,7 +504,6 @@ def parse_command_line_arguments(logger):
                                                              'Directory will be named iAuditor Audit Exports, and will '
                                                              'be placed in your current directory')
     args = parser.parse_args()
-    print(args)
     if args.docker is None:
         if args.config is None:
             rename_config_sample(logger)
@@ -513,6 +521,10 @@ def parse_command_line_arguments(logger):
     else:
         config_filename = None
 
+    if args.setup:
+        initial_setup(logger)
+        exit()
+
     export_formats = ['pdf']
     if args.format is not None and len(args.format) > 0:
         valid_export_formats = ['json', 'docx', 'pdf', 'csv', 'media', 'web-report-link', 'actions', 'actions-sql',
@@ -528,7 +540,392 @@ def parse_command_line_arguments(logger):
 
     loop_enabled = True if args.loop is not None else False
     docker_enabled = True if args.docker is not None else False
-    print(docker_enabled)
 
     return config_filename, export_formats, args.list_preferences, loop_enabled, docker_enabled
 
+
+def get_port(db_type):
+    if db_type == 'sql':
+        return '1433'
+    elif db_type == 'postgres':
+        return '5432'
+    elif db_type == 'mysql':
+        return '3308'
+    else:
+        return None
+
+
+def get_schema(db_type):
+    if db_type == 'sql':
+        return 'dbo'
+    elif db_type == 'postgres':
+        return 'public'
+    elif db_type == 'mysql':
+        return None
+    else:
+        return None
+
+
+def get_default_db(db_type):
+    if db_type == 'sql':
+        return 'iAuditor?driver=ODBC Driver 17 for SQL Server'
+    else:
+        return 'auditor'
+
+
+def ask_text_question(str):
+    response = questionary.text(str).ask()
+    return response
+
+
+def ask_multi_question(str, choices):
+    response = questionary.select(str,
+                                  choices=choices
+                                  ).ask()
+    return response
+
+
+def sanitise_config_name(logger, config_name):
+    if config_name is None:
+        logger.info('The Config Name has been left blank, defaulting to iauditor.')
+        config_name = 'iauditor'
+    elif ' ' in config_name:
+        config_name = config_name.replace(' ', '_')
+    else:
+        config_name = config_name
+    if re.match("^[A-Za-z0-9_-]*$", config_name):
+        config_name = config_name
+
+    return config_name
+
+
+def setup_database():
+    db_type = questionary.select("Which database type are you using?",
+                                 choices=[{'name': "SQL", 'value': 'mssql+pyodbc_mssql'},
+                                          {'name': "MySQL", 'value': 'mysql'},
+                                          {'name': "Postgres", 'value': 'postgres'}]
+                                 ).ask()
+    db_settings = {'database_type': db_type,
+                   'database_user': questionary.text("Database username").ask(),
+                   'database_pwd': questionary.password("Database Password").ask(),
+                   'database_server': questionary.text("Database Server Address").ask(),
+                   'database_port': questionary.text("Database Port", default=get_port(db_type)).ask(),
+                   'database_schema': questionary.text("Database Schema", default=get_schema(db_type)).ask(),
+                   'database_name': questionary.text("Database Name", default='iAuditor?driver=ODBC Driver 17 for SQL '
+                                                                              'Server').ask()}
+
+    return db_settings
+
+
+def update_key(logger, settings, key):
+    print(key)
+    new_value = None
+    if key in ['token', 'api_token']:
+        new_value = sp.interactive_login()
+    elif key in ['proxy_http', 'proxy_https']:
+        new_value = ask_text_question('Proxy Address')
+    elif key == 'config_name':
+        new_value = ask_text_question('Config Name')
+        new_value = sanitise_config_name(logger, new_value)
+    elif key == 'export_path':
+        markdown = '''
+                    It is usually best to leave this option blank and use the default of the exports folder within the 
+                    same folder where you run the tool. If you need to set the path, type it below. The path can be 
+                    either absolute or relative.
+                    '''
+        print(Panel(markdown, box=box.HEAVY))
+        new_value = ask_text_question('Where to place exported files.')
+    elif key == 'filename':
+        options = [
+            {"name": "Audit ID", "value": None},
+            {"name": "Audit Title", "value": "f3245d40-ea77-11e1-aff1-0800200c9a66"},
+            {"name": "Conducted By", "value": "f3245d43-ea77-11e1-aff1-0800200c9a66"},
+            {"name": "Document No", "value": "f3245d46-ea77-11e1-aff1-0800200c9a66"},
+            {"name": "Conducted At (Location)", "value": "f3245d44-ea77-11e1-aff1-0800200c9a66"},
+        ]
+        new_value = ask_multi_question('When exporting PDFs, how do you want to name the files?', options)
+    elif key == 'export_archived':
+        options = [{'name': "Only export inspections that are not in the archive", 'value': False},
+                   {'name': "Export Inspections both in and out of the archive", 'value': 'both'},
+                   {'name': "Only export inspections in the archive", 'value': True}
+                   ]
+        new_value = ask_multi_question('Do you want to export archived inspections?', options)
+    elif key == 'export_completed':
+        options = [{'name': "Only export inspections that are completed", 'value': True},
+                   {'name': "Export all inspections regardless of completion status", 'value': 'both'},
+                   {'name': "Only export inspections that are incomplete", 'value': False}
+                   ]
+        new_value = ask_multi_question('Do you want to export archived inspections?', options)
+    elif key.startswith('database_'):
+        logger.info('These settings rely on each other so we reset them all and then test. If you want to edit '
+                    'individual database options, please edit the config file directly.')
+        db_settings = setup_database()
+        sql_test = test_sql_settings(logger, db_settings)
+        if sql_test:
+            logger.info('Worked')
+        else:
+            logger.warning('Did not work')
+            setup_database()
+    else:
+        print(f'{key} is not a recognised setting. If unsure, start a new config file.')
+    if key in settings['API']:
+        settings['API'][key] = new_value
+    elif key in settings['export_options']:
+        settings['export_options'][key] = new_value
+    else:
+        settings[key] = new_value
+
+
+def modify_choice(logger, settings, config_path):
+    options = []
+    for k, v in settings.items():
+        if k == 'config_name':
+            options.append(k)
+        else:
+            options.extend(list(v))
+    pp(options)
+    print('Which setting do you need to modify?')
+    exit_no_save = 'Exit without saving changes'
+    exit_save = 'Exit and save'
+    if exit_no_save not in options:
+        exit_list = [exit_save, exit_no_save, Separator()]
+        options = exit_list+options
+    to_modify = questionary.select("Select an option to modify:", choices=options).ask()
+    if to_modify == exit_save:
+        with open(config_path, 'w') as file:
+            stream = yaml.dump(settings, default_flow_style=False)
+            file.write(stream.replace('-', ''))
+        logger.info('All done. Re run the tool to use your new configuration. ')
+        sys.exit()
+    elif to_modify == exit_no_save:
+        logger.info('Changes discarded.')
+        sys.exit()
+    elif not to_modify:
+        modify_choice(logger, settings, config_path)
+    else:
+        update_key(logger, settings, to_modify)
+        modify_choice(logger, settings, config_path)
+
+
+def initial_setup(logger):
+    """
+    Creates a new directory in current working directory called 'iauditor_exports_folder'.  If 'iauditor_exports_folder'
+    already exists the setup script will notify user that the folder exists and exit. Default config file placed
+    in directory, with user API Token. User is asked for iAuditor credentials in order to generate their
+    API token.
+    :param logger:  the logger
+    """
+
+    model_config = {
+        'API': {
+            'token': None,
+            'ssl_cert': None,
+            'ssl_verify': None,
+            'proxy_http': None,
+            'proxy_https': None
+        },
+        'config_name': None,
+        'export_options': {
+            'export_path': None,
+            'filename': None,
+            'export_archived': False,
+            'export_completed': True,
+            'use_real_template_name': False,
+            'export_inactive_items': False,
+            'preferences': None,
+            'template_ids': None,
+            'sync_delay_in_seconds': 900,
+            'media_sync_offset_in_seconds': 900,
+            'merge_rows': False,
+            'actions_merge_rows': False,
+            'sql_table': 'iauditor_data',
+            'database_type': None,
+            'database_user': None,
+            'database_pwd': None,
+            'database_server': None,
+            'database_port': None,
+            'database_schema': None,
+            'database_name': None
+        }
+    }
+    flat_config = [
+        'token',
+        'ssl_cert',
+        'ssl_verify',
+        'proxy_http',
+        'proxy_https'
+        'config_name',
+        'export_path',
+        'filename',
+        'export_archived',
+        'export_completed',
+        'use_real_template_name',
+        'export_inactive_items',
+        'preferences',
+        'template_ids',
+        'sync_delay_in_seconds',
+        'media_sync_offset_in_seconds',
+        'merge_rows',
+        'actions_merge_rows',
+        'sql_table',
+        'database_type',
+        'database_user',
+        'database_pwd',
+        'database_server',
+        'database_port',
+        'database_schema',
+        'database_name'
+    ]
+
+    # setup variables
+    current_directory_path = os.getcwd()
+    exports_folder_name = 'configs'
+
+    create_directory_if_not_exists(logger, exports_folder_name)
+
+    config_files = os.listdir(exports_folder_name)
+
+    if config_files:
+        if len(config_files) > 1:
+            config_to_edit = questionary.select(
+                "It looks like you already have some config files. Which one do you want to modify?",
+                choices=config_files
+            ).ask()
+        else:
+            config_to_edit = config_files[0]
+        config_path = os.path.join(exports_folder_name, config_to_edit)
+        with open(os.path.join(exports_folder_name, config_to_edit)) as file:
+            # The FullLoader parameter handles the conversion from YAML
+            # scalar values to Python the dictionary format
+            settings = yaml.load(file, Loader=yaml.FullLoader)
+
+            pp(settings)
+        # settings = load_config_settings(logger, os.path.join(exports_folder_name, config_to_edit))
+        # options = list(settings['API'])
+        modify_choice(logger, settings, config_path)
+    else:
+        settings = model_config
+        options = flat_config
+        config_path = os.path.join(exports_folder_name, 'config.yaml')
+        modify_choice(logger, settings, config_path)
+
+    # print(config_to_edit)
+    #
+    # # api_token = sp.interactive_login()
+    # api_token = '123'
+    # configure_db = questionary.confirm("Do you need to configure a database?").ask()
+    # if configure_db:
+    #     db_type = questionary.select("Which database type are you using?",
+    #                                  choices=[{'name': "SQL", 'value': 'mssql+pyodbc_mssql'},
+    #                                           {'name': "MySQL", 'value': 'mysql'},
+    #                                           {'name': "Postgres", 'value': 'postgres'}]
+    #                                  ).ask()
+    #     # db_test = {'database_type': questionary.select("Which database type are you using?",
+    #     #                                                choices=[{'name': "SQL", 'value': ' mssql+pyodbc_mssql'},
+    #     #                                                         {'name': "MySQL", 'value': 'mysql'},
+    #     #                                                         {'name': "Postgres", 'value': 'postgres'}]
+    #     #                                                ).skip_if(configure_db, default=True).ask(),
+    #     #            'database_user': questionary.text("Database username").ask(),
+    #     #            'database_pwd': questionary.password("Database Password").ask(),
+    #     #            'database_server': questionary.text("Database Server Address").ask(),
+    #     #            'database_port': questionary.text("Database Port", default=get_port(db_type)).ask(),
+    #     #            'database_schema': questionary.text("Database Schema", default=get_port(db_type)).ask(),
+    #     #            'database_name': 'iAuditor?driver=ODBC Driver 17 for SQL Server'}
+    #     db_test = {'database_type': 'postgres',
+    #                'database_user': 'edd',
+    #                'database_pwd': 'sty2shapal',
+    #                'database_server': 'localhost',
+    #                'database_port': '5432',
+    #                'database_schema': 'public',
+    #                'database_name': 'iauditor'}
+    #     test_sql_settings(logger, db_test)
+    #
+    # exit()
+    # dict_file = {
+    #     'API': {
+    #         'token': api_token,
+    #         'ssl_cert': None,
+    #         'ssl_verify': None,
+    #         'proxy_http': None,
+    #         'proxy_https': None
+    #     },
+    #     'config_name': 'iauditor',
+    #     'export_options': {
+    #         'export_path': None,
+    #         'filename': None,
+    #         'export_archived': questionary.select(
+    #             "Do you want to export archived inspections?",
+    #             choices=[{'name': "Only export inspections that are not in the archive", 'value': True},
+    #                      {'name': "Export Inspections both in and out of the archive", 'value': False},
+    #                      {'name': "Only export inspections in the archive", 'value': 'both'}
+    #                      ]).ask(),
+    #         'export_completed': questionary.select(
+    #             "Do you want to export archived inspections?",
+    #             choices=[{'name': "Only export inspections that are completed", 'value': True},
+    #                      {'name': "Export all inspections regardless of completion status", 'value': 'both'},
+    #                      {'name': "Only export inspections that are incomplete", 'value': False}
+    #                      ]).ask(),
+    #         'use_real_template_name': False,
+    #         'export_inactive_items': False,
+    #         'preferences': None,
+    #         'template_ids': None,
+    #         'sync_delay_in_seconds': 900,
+    #         'media_sync_offset_in_seconds': 900,
+    #         'merge_rows': False,
+    #         'actions_merge_rows': False,
+    #         'sql_table': 'iauditor_data',
+    #         'database_type': questionary.select("Which database type are you using?",
+    #                                             choices=[{'name': "SQL", 'value': ' mssql+pyodbc_mssql'},
+    #                                                      {'name': "MySQL", 'value': 'mysql'},
+    #                                                      {'name': "Postgres", 'value': 'postgres'}]
+    #                                             ).skip_if(configure_db, default=True).ask(),
+    #         'database_user': questionary.text("Database username").ask(),
+    #         'database_pwd': questionary.password("Database Password").ask(),
+    #         'database_server': questionary.text("Database Server Address").ask(),
+    #         'database_port': questionary.text("Database Port", default=get_port(dict_file['database_type'])).ask(),
+    #         'database_schema': 'dbo',
+    #         'database_name': 'iAuditor?driver=ODBC Driver 17 for SQL Server'
+    #     }
+    # }
+
+    # with open(r'example.yaml', 'w') as file:
+    #     stream = yaml.dump(dict_file, default_flow_style=False)
+    #     file.write(stream.replace('-', ''))
+    sys.exit()
+    # get token, set token
+    token = sp.get_user_api_token(logger)
+
+    if not token:
+        logger.critical("Problem generating API token.")
+        exit()
+    DEFAULT_CONFIG_FILE_YAML[1] = '\n    token: ' + str(token)
+
+    # create new directory
+    create_directory_if_not_exists(logger, exports_folder_name)
+
+    # write config file
+    path_to_config_file = os.path.join(current_directory_path, exports_folder_name, 'config.yaml')
+    if os.path.exists(path_to_config_file):
+        logger.critical("Config file already exists at {0}".format(path_to_config_file))
+        logger.info("Please remove or rename the existing config file, then retry this setup program.")
+        logger.info('Exiting.')
+        exit()
+    try:
+        config_file = open(path_to_config_file, 'w')
+        config_file.writelines(DEFAULT_CONFIG_FILE_YAML)
+    except Exception as ex:
+        log_critical_error(logger, ex, "Problem creating " + path_to_config_file)
+        logger.info("Exiting.")
+        exit()
+    logger.info("Default config file successfully created at {0}.".format(path_to_config_file))
+    os.chdir(exports_folder_name)
+    choice = input('Would you like to start exporting audits from:\n  1. The beginning of time\n  '
+                   '2. Now\n  Enter 1 or 2: ')
+    if choice == '1':
+        logger.info('Audit exporting set to start from earliest audits available')
+        get_last_successful(logger)
+    else:
+        now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        update_sync_marker_file(now)
+        logger.info('Audit exporting set to start from ' + now)
+    exit()

@@ -21,9 +21,46 @@ from getpass import getpass
 
 from tqdm import tqdm
 
+from questionary import prompt
+
 DEFAULT_EXPORT_FORMAT = 'PDF'
 GUID_PATTERN = '[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$'
 HTTP_USER_AGENT_ID = 'safetyculture-python-sdk'
+
+
+def interactive_login():
+    login_questions = [
+        {
+            'type': 'input',
+            'name': 'username',
+            'message': 'Your iAuditor username (should be your email address.)'
+        },
+        {
+            'type': 'password',
+            'name': 'password',
+            'message': 'Your iAuditor Password'
+        }
+    ]
+    login = prompt(login_questions)
+    username = login['username']
+    password = login['password']
+    generate_token_url = "https://api.safetyculture.io/auth"
+    payload = {
+        "username": username,
+        "password": password,
+        "grant_type": "password"
+    }
+    headers = {
+        'content-type': "application/x-www-form-urlencoded",
+        'cache-control': "no-cache",
+    }
+    response = requests.request("POST", generate_token_url, data=payload, headers=headers)
+    if response.status_code == requests.codes.ok:
+        print('Token successfully obtained, continuing to export.')
+        return response.json()['access_token']
+    else:
+        print('An error occurred calling ' + generate_token_url + ': ' + str(response.json()))
+        interactive_login()
 
 
 def get_user_api_token(logger):
@@ -114,16 +151,18 @@ class SafetyCulture:
 
     def raise_pool(self, list_of_audits, logger):
         # Establish the Pool
+        self.L[:] = []
         pool = ThreadPool(processes=4)
+        list(tqdm(pool.imap(self.process_audit, list_of_audits), total=len(list_of_audits)))
         # self.current_time = time.time()
-        logger.info(f'Downloading {len(list_of_audits)} inspections, hang tight...')
-        if len(list_of_audits) > 500:
-            logger.info('We need to download more than 500 inspections so going to do it in chunks to avoid hitting the '
-                        'API limits.')
-            for chunk in self.chunks(list_of_audits, 500):
-                list(tqdm(pool.imap(self.process_audit, chunk), total=len(chunk)))
-        else:
-            list(tqdm(pool.imap(self.process_audit, list_of_audits), total=len(list_of_audits)))
+        # logger.info(f'Downloading {len(list_of_audits)} inspections, hang tight...')
+        # if len(list_of_audits) > 500:
+        #     logger.info('We need to download more than 500 inspections so going to do it '
+        #                 'in chunks to avoid hitting the API limits.')
+        #     for chunk in self.chunks(list_of_audits, 50):
+        #         list(tqdm(pool.imap(self.process_audit, chunk), total=len(chunk)))
+        # else:
+        #     list(tqdm(pool.imap(self.process_audit, list_of_audits), total=len(list_of_audits)))
         pool.close()
         pool.join()
 
@@ -287,11 +326,11 @@ class SafetyCulture:
         self.log_http_status(response.status_code, log_message)
 
         if 'total' in result:
-            print('Total ', result['total'])
+            # print('Total ', result['total'])
             if int(result['total']) > 1000 or backlog is not None:
                 backlog.extend(result['audits'])
-                print('Backlog Length ', len(backlog))
-                if result['audits']:
+                # print('Backlog Length ', len(backlog))
+                if result['audits'] and len(backlog) < 5000:
                     new_modified_after = result['audits'][len(result['audits'])-1]['modified_at']
                     self.discover_audits(template_id=template_id, completed=completed,
                                          archived=archived, modified_after=new_modified_after, backlog=backlog)

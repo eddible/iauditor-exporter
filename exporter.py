@@ -4,9 +4,12 @@
 import time
 import sys
 
+from rich.panel import Panel
+from rich.traceback import install
+from rich import print, box
+
 try:
-    from modules.exporters import export_audit_pdf_word, export_audit_json, export_audit_csv, \
-        export_actions
+    from modules.exporters import export_audit_pdf_word, export_audit_json, export_audit_csv, export_actions
     from modules.global_variables import *
     from modules.last_successful import get_last_successful, update_sync_marker_file
     from modules.logger import configure_logger
@@ -27,6 +30,8 @@ except ImportError as e:
         'If you continue to see this error, please review this page of the documentation: '
         'https://safetyculture.github.io/iauditor-exporter/script-setup/installing-packages/')
     sys.exit()
+
+install()
 
 
 def sync_exports(logger, settings, sc_client):
@@ -87,17 +92,34 @@ def sync_exports(logger, settings, sc_client):
         audits_to_process = list_of_audits['audits']
         for export_format in settings[EXPORT_FORMATS]:
             if export_format in ['sql', 'csv']:
-                audits_to_process = sc_client.raise_pool(list_of_audits['audits'], logger)
-            if export_format == 'sql':
-                get_started = sql_setup(logger, settings, 'audit')
-            elif export_format in ['pickle']:
-                get_started = ['complete', 'complete']
-        for audit in audits_to_process:
-            logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
-            process_audit(logger, settings, sc_client, audit, get_started)
-            export_count += 1
-        if get_started != 'ignored':
-            end_session(get_started[1])
+                if export_format == 'sql':
+                    get_started = sql_setup(logger, settings, 'audit')
+                if export_format == 'csv':
+                    get_started = 'csv'
+                chunks_to_process = sc_client.chunks(audits_to_process, 500)
+                for chunk in chunks_to_process:
+                    loop_through_chunks(chunk, logger, settings, sc_client, export_count, export_total, get_started)
+                if get_started not in ['csv', 'ignored']:
+                    end_session(get_started[1])
+                    # chunks_to_process = sc_client.raise_pool(list_of_audits['audits'], logger)
+                # elif export_format in ['pickle']:
+                #     get_started = ['complete', 'complete']
+            else:
+                for audit in audits_to_process:
+                    logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
+                    process_audit(logger, settings, sc_client, audit, get_started)
+                    export_count += 1
+                if get_started != 'ignored':
+                    end_session(get_started[1])
+
+
+def loop_through_chunks(audits_to_process, logger, settings, sc_client, export_count, export_total, get_started):
+    print('chunks')
+    audits_to_process = sc_client.raise_pool(audits_to_process, logger)
+    for audit in audits_to_process:
+        logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
+        process_audit(logger, settings, sc_client, audit, get_started)
+        export_count += 1
 
 
 def process_audit(logger, settings, sc_client, audit, get_started):
@@ -112,10 +134,12 @@ def process_audit(logger, settings, sc_client, audit, get_started):
     if not check_if_media_sync_offset_satisfied(logger, settings, audit):
         return
     audit_id = audit['audit_id']
-    logger.info('downloading ' + audit_id)
-    if get_started != 'ignored':
+
+    if get_started not in ['csv', 'ignored']:
+        logger.info('importing ' + audit_id)
         audit_json = audit
     else:
+        logger.info('downloading ' + audit_id)
         audit_json = sc_client.get_audit(audit_id)
     template_id = audit_json['template_id']
     preference_id = None
@@ -159,6 +183,32 @@ def loop(logger, sc_client, settings):
 
 
 def main():
+    logo = '''
+                                                      
+                                                  
+                                                  
+                       *****                      
+                     *******##(                   
+                  ********#######                 
+                *******     ########              
+             ********         *#####              
+          ,*******                                
+        ********                      *****       
+       ******                       *******.      
+                                 ********         
+                ///            ********           
+               //////*      ********              
+                ////////  ********                
+                   /////*******                   
+                     *******,                     
+                                                  
+    
+Thanks for using the iAuditor Exporter! If you need some help setting up, re run the tool with the --setup option and the script will help guide you through the configuration.
+
+    '''
+    # intro = 'Thanks for using the iAuditor Exporter! If you need some help setting up, re run the tool with the --setup option and the script will help guide you through the configuration.'
+    print(Panel(logo, box=box.HEAVY, expand=False, width=60, padding=1))
+    # print(Panel(intro, box=box.HEAVY, expand=False, width=60))
     try:
         logger = configure_logger()
         path_to_config_file, export_formats, preferences_to_list, loop_enabled, docker_enabled = parse_command_line_arguments(
