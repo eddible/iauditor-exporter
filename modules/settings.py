@@ -7,9 +7,11 @@ from questionary import Separator
 from yaml.scanner import ScannerError
 
 from modules.global_variables import *
+from modules.last_successful import get_last_successful, parse_ls, update_sync_marker_file
 from modules.logger import log_critical_error, create_directory_if_not_exists
 # from safetypy import safetypy as sp
 import modules.safetypy as sp
+from modules.setup_questions import questions, flat_config, model_config
 from modules.sql import test_sql_settings
 
 from pprint import pp
@@ -573,15 +575,25 @@ def get_default_db(db_type):
         return 'auditor'
 
 
-def ask_text_question(str):
-    response = questionary.text(str).ask()
-    return response
+def ask_question(logger, str, q_type, choices=None, special=None, default=[]):
+    response = None
+    if q_type == 'multi':
+        response = questionary.select(str, default=default,
+                                      choices=choices
+                                      ).ask()
+    elif q_type == 'text':
+        response = questionary.text(str).ask()
 
+    elif q_type == 'int':
+        response = questionary.text(str).ask()
+        response = int(response)
 
-def ask_multi_question(str, choices):
-    response = questionary.select(str,
-                                  choices=choices
-                                  ).ask()
+    elif q_type == 'bool':
+        response = questionary.confirm(str).ask()
+
+    if special == 'config_name':
+        response = sanitise_config_name(logger, response)
+
     return response
 
 
@@ -599,7 +611,7 @@ def sanitise_config_name(logger, config_name):
     return config_name
 
 
-def setup_database():
+def setup_database(logger):
     db_type = questionary.select("Which database type are you using?",
                                  choices=[{'name': "SQL", 'value': 'mssql+pyodbc_mssql'},
                                           {'name': "MySQL", 'value': 'mysql'},
@@ -609,92 +621,89 @@ def setup_database():
                    'database_user': questionary.text("Database username").ask(),
                    'database_pwd': questionary.password("Database Password").ask(),
                    'database_server': questionary.text("Database Server Address").ask(),
-                   'database_port': questionary.text("Database Port", default=get_port(db_type)).ask(),
+                   'database_port': ask_question(logger, 'Database Port', 'int', default=get_port(db_type)),
                    'database_schema': questionary.text("Database Schema", default=get_schema(db_type)).ask(),
-                   'database_name': questionary.text("Database Name", default='iAuditor?driver=ODBC Driver 17 for SQL '
-                                                                              'Server').ask()}
+                   'database_name': questionary.text("Database Name", default=get_default_db(db_type)).ask()}
 
     return db_settings
 
 
+def box_print(h):
+    if h:
+        return Panel(h, box=box.HEAVY)
+    else:
+        return ''
+
+
 def update_key(logger, settings, key):
-    print(key)
-    new_value = None
-    if key in ['token', 'api_token']:
-        new_value = sp.interactive_login()
-    elif key in ['proxy_http', 'proxy_https']:
-        new_value = ask_text_question('Proxy Address')
-    elif key == 'config_name':
-        new_value = ask_text_question('Config Name')
-        new_value = sanitise_config_name(logger, new_value)
-    elif key == 'export_path':
-        markdown = '''
-                    It is usually best to leave this option blank and use the default of the exports folder within the 
-                    same folder where you run the tool. If you need to set the path, type it below. The path can be 
-                    either absolute or relative.
-                    '''
-        print(Panel(markdown, box=box.HEAVY))
-        new_value = ask_text_question('Where to place exported files.')
-    elif key == 'filename':
-        options = [
-            {"name": "Audit ID", "value": None},
-            {"name": "Audit Title", "value": "f3245d40-ea77-11e1-aff1-0800200c9a66"},
-            {"name": "Conducted By", "value": "f3245d43-ea77-11e1-aff1-0800200c9a66"},
-            {"name": "Document No", "value": "f3245d46-ea77-11e1-aff1-0800200c9a66"},
-            {"name": "Conducted At (Location)", "value": "f3245d44-ea77-11e1-aff1-0800200c9a66"},
-        ]
-        new_value = ask_multi_question('When exporting PDFs, how do you want to name the files?', options)
-    elif key == 'export_archived':
-        options = [{'name': "Only export inspections that are not in the archive", 'value': False},
-                   {'name': "Export Inspections both in and out of the archive", 'value': 'both'},
-                   {'name': "Only export inspections in the archive", 'value': True}
-                   ]
-        new_value = ask_multi_question('Do you want to export archived inspections?', options)
-    elif key == 'export_completed':
-        options = [{'name': "Only export inspections that are completed", 'value': True},
-                   {'name': "Export all inspections regardless of completion status", 'value': 'both'},
-                   {'name': "Only export inspections that are incomplete", 'value': False}
-                   ]
-        new_value = ask_multi_question('Do you want to export archived inspections?', options)
-    elif key.startswith('database_'):
-        logger.info('These settings rely on each other so we reset them all and then test. If you want to edit '
-                    'individual database options, please edit the config file directly.')
-        db_settings = setup_database()
+    key_to_update = questions.get(key)
+    if key_to_update:
+        q = key_to_update['question']
+        t = key_to_update['type']
+        parent = key_to_update['parent']
+        if t == 'api_token':
+            new_value = sp.interactive_login()
+            if not new_value:
+                new_value = sp.interactive_login()
+        else:
+            if 'options' in key_to_update:
+                choices = key_to_update.get('options')
+            else:
+                choices = None
+            if parent:
+                current_value = settings[parent].get(key)
+            else:
+                current_value = settings.get(key)
+            h = f'''
+                Currently set to: {current_value} 
+                {key_to_update['header']}
+                '''
+            print(box_print(h))
+            new_value = ask_question(logger, q, t, choices, special=key_to_update)
+        if key_to_update['parent']:
+            settings[parent][key] = new_value
+        else:
+            settings[key] = new_value
+    elif key.startswith(('database_', 'sql_')):
+        db_settings = setup_database(logger)
+        print(db_settings)
         sql_test = test_sql_settings(logger, db_settings)
         if sql_test:
-            logger.info('Worked')
+            logger.info('Connected successfully, writing settings to config file.')
+            for k, v in db_settings.items():
+                settings['export_options'][k] = v
         else:
-            logger.warning('Did not work')
+            logger.warning('Connection unsuccessful, trying again.')
             setup_database()
     else:
         print(f'{key} is not a recognised setting. If unsure, start a new config file.')
-    if key in settings['API']:
-        settings['API'][key] = new_value
-    elif key in settings['export_options']:
-        settings['export_options'][key] = new_value
-    else:
-        settings[key] = new_value
 
 
 def modify_choice(logger, settings, config_path):
     options = []
     for k, v in settings.items():
+        options.append(Separator())
         if k == 'config_name':
-            options.append(k)
+            options.append(f'{k} - Current setting: {v}')
         else:
-            options.extend(list(v))
-    pp(options)
+            for inner_k, inner_v in v.items():
+                if inner_k == 'sql_table':
+                    options.append(Separator())
+                options.append(f'{inner_k} - Current setting: {inner_v}')
     print('Which setting do you need to modify?')
     exit_no_save = 'Exit without saving changes'
     exit_save = 'Exit and save'
     if exit_no_save not in options:
         exit_list = [exit_save, exit_no_save, Separator()]
-        options = exit_list+options
+        options = exit_list + options
     to_modify = questionary.select("Select an option to modify:", choices=options).ask()
+    to_modify = to_modify.split('-')[0].strip()
     if to_modify == exit_save:
         with open(config_path, 'w') as file:
-            stream = yaml.dump(settings, default_flow_style=False)
-            file.write(stream.replace('-', ''))
+            updated_config = yaml.dump(settings, default_flow_style=False, sort_keys=False)
+            updated_config = updated_config.replace('-', '')
+            updated_config = updated_config.replace('null', '')
+            file.write(updated_config.replace('-', ''))
         logger.info('All done. Re run the tool to use your new configuration. ')
         sys.exit()
     elif to_modify == exit_no_save:
@@ -716,67 +725,6 @@ def initial_setup(logger):
     :param logger:  the logger
     """
 
-    model_config = {
-        'API': {
-            'token': None,
-            'ssl_cert': None,
-            'ssl_verify': None,
-            'proxy_http': None,
-            'proxy_https': None
-        },
-        'config_name': None,
-        'export_options': {
-            'export_path': None,
-            'filename': None,
-            'export_archived': False,
-            'export_completed': True,
-            'use_real_template_name': False,
-            'export_inactive_items': False,
-            'preferences': None,
-            'template_ids': None,
-            'sync_delay_in_seconds': 900,
-            'media_sync_offset_in_seconds': 900,
-            'merge_rows': False,
-            'actions_merge_rows': False,
-            'sql_table': 'iauditor_data',
-            'database_type': None,
-            'database_user': None,
-            'database_pwd': None,
-            'database_server': None,
-            'database_port': None,
-            'database_schema': None,
-            'database_name': None
-        }
-    }
-    flat_config = [
-        'token',
-        'ssl_cert',
-        'ssl_verify',
-        'proxy_http',
-        'proxy_https'
-        'config_name',
-        'export_path',
-        'filename',
-        'export_archived',
-        'export_completed',
-        'use_real_template_name',
-        'export_inactive_items',
-        'preferences',
-        'template_ids',
-        'sync_delay_in_seconds',
-        'media_sync_offset_in_seconds',
-        'merge_rows',
-        'actions_merge_rows',
-        'sql_table',
-        'database_type',
-        'database_user',
-        'database_pwd',
-        'database_server',
-        'database_port',
-        'database_schema',
-        'database_name'
-    ]
-
     # setup variables
     current_directory_path = os.getcwd()
     exports_folder_name = 'configs'
@@ -795,137 +743,73 @@ def initial_setup(logger):
             config_to_edit = config_files[0]
         config_path = os.path.join(exports_folder_name, config_to_edit)
         with open(os.path.join(exports_folder_name, config_to_edit)) as file:
-            # The FullLoader parameter handles the conversion from YAML
-            # scalar values to Python the dictionary format
             settings = yaml.load(file, Loader=yaml.FullLoader)
-
-            pp(settings)
-        # settings = load_config_settings(logger, os.path.join(exports_folder_name, config_to_edit))
-        # options = list(settings['API'])
-        modify_choice(logger, settings, config_path)
     else:
         settings = model_config
-        options = flat_config
-        config_path = os.path.join(exports_folder_name, 'config.yaml')
-        modify_choice(logger, settings, config_path)
-
-    # print(config_to_edit)
-    #
-    # # api_token = sp.interactive_login()
-    # api_token = '123'
-    # configure_db = questionary.confirm("Do you need to configure a database?").ask()
-    # if configure_db:
-    #     db_type = questionary.select("Which database type are you using?",
-    #                                  choices=[{'name': "SQL", 'value': 'mssql+pyodbc_mssql'},
-    #                                           {'name': "MySQL", 'value': 'mysql'},
-    #                                           {'name': "Postgres", 'value': 'postgres'}]
-    #                                  ).ask()
-    #     # db_test = {'database_type': questionary.select("Which database type are you using?",
-    #     #                                                choices=[{'name': "SQL", 'value': ' mssql+pyodbc_mssql'},
-    #     #                                                         {'name': "MySQL", 'value': 'mysql'},
-    #     #                                                         {'name': "Postgres", 'value': 'postgres'}]
-    #     #                                                ).skip_if(configure_db, default=True).ask(),
-    #     #            'database_user': questionary.text("Database username").ask(),
-    #     #            'database_pwd': questionary.password("Database Password").ask(),
-    #     #            'database_server': questionary.text("Database Server Address").ask(),
-    #     #            'database_port': questionary.text("Database Port", default=get_port(db_type)).ask(),
-    #     #            'database_schema': questionary.text("Database Schema", default=get_port(db_type)).ask(),
-    #     #            'database_name': 'iAuditor?driver=ODBC Driver 17 for SQL Server'}
-    #     db_test = {'database_type': 'postgres',
-    #                'database_user': 'edd',
-    #                'database_pwd': 'sty2shapal',
-    #                'database_server': 'localhost',
-    #                'database_port': '5432',
-    #                'database_schema': 'public',
-    #                'database_name': 'iauditor'}
-    #     test_sql_settings(logger, db_test)
-    #
-    # exit()
-    # dict_file = {
-    #     'API': {
-    #         'token': api_token,
-    #         'ssl_cert': None,
-    #         'ssl_verify': None,
-    #         'proxy_http': None,
-    #         'proxy_https': None
-    #     },
-    #     'config_name': 'iauditor',
-    #     'export_options': {
-    #         'export_path': None,
-    #         'filename': None,
-    #         'export_archived': questionary.select(
-    #             "Do you want to export archived inspections?",
-    #             choices=[{'name': "Only export inspections that are not in the archive", 'value': True},
-    #                      {'name': "Export Inspections both in and out of the archive", 'value': False},
-    #                      {'name': "Only export inspections in the archive", 'value': 'both'}
-    #                      ]).ask(),
-    #         'export_completed': questionary.select(
-    #             "Do you want to export archived inspections?",
-    #             choices=[{'name': "Only export inspections that are completed", 'value': True},
-    #                      {'name': "Export all inspections regardless of completion status", 'value': 'both'},
-    #                      {'name': "Only export inspections that are incomplete", 'value': False}
-    #                      ]).ask(),
-    #         'use_real_template_name': False,
-    #         'export_inactive_items': False,
-    #         'preferences': None,
-    #         'template_ids': None,
-    #         'sync_delay_in_seconds': 900,
-    #         'media_sync_offset_in_seconds': 900,
-    #         'merge_rows': False,
-    #         'actions_merge_rows': False,
-    #         'sql_table': 'iauditor_data',
-    #         'database_type': questionary.select("Which database type are you using?",
-    #                                             choices=[{'name': "SQL", 'value': ' mssql+pyodbc_mssql'},
-    #                                                      {'name': "MySQL", 'value': 'mysql'},
-    #                                                      {'name': "Postgres", 'value': 'postgres'}]
-    #                                             ).skip_if(configure_db, default=True).ask(),
-    #         'database_user': questionary.text("Database username").ask(),
-    #         'database_pwd': questionary.password("Database Password").ask(),
-    #         'database_server': questionary.text("Database Server Address").ask(),
-    #         'database_port': questionary.text("Database Port", default=get_port(dict_file['database_type'])).ask(),
-    #         'database_schema': 'dbo',
-    #         'database_name': 'iAuditor?driver=ODBC Driver 17 for SQL Server'
-    #     }
-    # }
-
-    # with open(r'example.yaml', 'w') as file:
-    #     stream = yaml.dump(dict_file, default_flow_style=False)
-    #     file.write(stream.replace('-', ''))
-    sys.exit()
-    # get token, set token
-    token = sp.get_user_api_token(logger)
-
-    if not token:
-        logger.critical("Problem generating API token.")
-        exit()
-    DEFAULT_CONFIG_FILE_YAML[1] = '\n    token: ' + str(token)
-
-    # create new directory
-    create_directory_if_not_exists(logger, exports_folder_name)
-
-    # write config file
-    path_to_config_file = os.path.join(current_directory_path, exports_folder_name, 'config.yaml')
-    if os.path.exists(path_to_config_file):
-        logger.critical("Config file already exists at {0}".format(path_to_config_file))
-        logger.info("Please remove or rename the existing config file, then retry this setup program.")
-        logger.info('Exiting.')
-        exit()
-    try:
-        config_file = open(path_to_config_file, 'w')
-        config_file.writelines(DEFAULT_CONFIG_FILE_YAML)
-    except Exception as ex:
-        log_critical_error(logger, ex, "Problem creating " + path_to_config_file)
-        logger.info("Exiting.")
-        exit()
-    logger.info("Default config file successfully created at {0}.".format(path_to_config_file))
-    os.chdir(exports_folder_name)
-    choice = input('Would you like to start exporting audits from:\n  1. The beginning of time\n  '
-                   '2. Now\n  Enter 1 or 2: ')
-    if choice == '1':
-        logger.info('Audit exporting set to start from earliest audits available')
-        get_last_successful(logger)
+        config_to_edit = 'config.yaml'
+        config_path = os.path.join(exports_folder_name, config_to_edit)
+    if 'config_name' in settings:
+        config_name = settings['config_name']
     else:
-        now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
-        update_sync_marker_file(now)
-        logger.info('Audit exporting set to start from ' + now)
-    exit()
+        print('Your config file is missing config_name. Delete the file, '
+              're run the tool and it will be recreated correctly.')
+
+    current_ls = get_last_successful(logger, config_name)
+    parsed_date = parse_ls(current_ls)
+    if parsed_date:
+        pretty_file_name = parsed_date.strftime("%Y-%m-%d at %H%M")
+
+        update_ls_q = ask_question(logger, f'We are currently searching for inspections completed after {pretty_file_name}, would you '
+              f'like to change this?', 'bool')
+        if update_ls_q:
+            print(box_print('''
+            You can use natural language here. For example if you wanted to start the search from March 22nd 2018, 
+            you could simply type 'March 22nd 2018'
+            '''))
+            change_ls = ask_question(logger, 'When should we search from? If you want to start from the beginning, '
+                                             'just press enter.', 'text')
+            new_date = parse_ls(change_ls)
+            if new_date:
+                new_date = new_date.strftime("%Y-%m-%dT%H:%M:%S%z")
+                update_sync_marker_file(str(new_date), config_name)
+
+    modify_choice(logger, settings, config_path)
+
+    sys.exit()
+    # # get token, set token
+    # token = sp.get_user_api_token(logger)
+    #
+    # if not token:
+    #     logger.critical("Problem generating API token.")
+    #     exit()
+    # DEFAULT_CONFIG_FILE_YAML[1] = '\n    token: ' + str(token)
+    #
+    # # create new directory
+    # create_directory_if_not_exists(logger, exports_folder_name)
+    #
+    # # write config file
+    # path_to_config_file = os.path.join(current_directory_path, exports_folder_name, 'config.yaml')
+    # if os.path.exists(path_to_config_file):
+    #     logger.critical("Config file already exists at {0}".format(path_to_config_file))
+    #     logger.info("Please remove or rename the existing config file, then retry this setup program.")
+    #     logger.info('Exiting.')
+    #     exit()
+    # try:
+    #     config_file = open(path_to_config_file, 'w')
+    #     config_file.writelines(DEFAULT_CONFIG_FILE_YAML)
+    # except Exception as ex:
+    #     log_critical_error(logger, ex, "Problem creating " + path_to_config_file)
+    #     logger.info("Exiting.")
+    #     exit()
+    # logger.info("Default config file successfully created at {0}.".format(path_to_config_file))
+    # os.chdir(exports_folder_name)
+    # choice = input('Would you like to start exporting audits from:\n  1. The beginning of time\n  '
+    #                '2. Now\n  Enter 1 or 2: ')
+    # if choice == '1':
+    #     logger.info('Audit exporting set to start from earliest audits available')
+    #     get_last_successful(logger)
+    # else:
+    #     now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    #     update_sync_marker_file(now)
+    #     logger.info('Audit exporting set to start from ' + now)
+    # exit()

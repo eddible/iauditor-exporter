@@ -1,8 +1,22 @@
 import os
+import sys
 
-from modules.settings import *
 from modules.logger import log_critical_error, create_directory_if_not_exists
 from modules.global_variables import ACTIONS_SYNC_MARKER_FILENAME, SYNC_MARKER_FILENAME
+import dateparser
+from dateparser.search import search_dates
+
+
+def parse_ls(date):
+    parsed_date = dateparser.parse(date)
+    if not parsed_date:
+        date = search_dates(date)
+    else:
+        date = parsed_date
+    if not date:
+        print('The date provided cannot be parsed. Defaulting to the beginning of your account.')
+        date = dateparser.parse('2000-01-01T00:00:00.000Z')
+    return date
 
 
 def set_last_successful_file_name(config_name, audit_or_action):
@@ -48,8 +62,12 @@ def get_last_successful(logger, config_name):
 
     if os.path.isfile(last_successful_file):
         with open(last_successful_file, 'r+') as last_run:
-            last_successful = last_run.readlines()[0]
-            last_successful = last_successful.strip()
+            check_for_rows = last_run.readlines()
+            if check_for_rows:
+                last_successful = check_for_rows[0]
+                last_successful = last_successful.strip()
+            else:
+                last_successful = '2000-01-01T00:00:00.000Z'
 
     else:
         beginning_of_time = '2000-01-01T00:00:00.000Z'

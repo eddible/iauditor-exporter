@@ -59,8 +59,11 @@ def interactive_login():
         print('Token successfully obtained, continuing to export.')
         return response.json()['access_token']
     else:
-        print('An error occurred calling ' + generate_token_url + ': ' + str(response.json()))
-        interactive_login()
+        if 'error_description' in response.json():
+            print('Error: ' + str(response.json()['error_description']))
+        else:
+            print('An error occurred calling ' + generate_token_url + ': ' + str(response.json()))
+        return None
 
 
 def get_user_api_token(logger):

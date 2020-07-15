@@ -77,7 +77,7 @@ def sql_setup(logger, settings, action_or_audit):
                                                          settings[DB_SERVER],
                                                          settings[DB_PORT],
                                                          settings[DB_NAME])
-
+    print(connection_string)
     engine = create_engine(connection_string)
     meta = MetaData()
     logger.debug('Making connection to ' + str(engine))

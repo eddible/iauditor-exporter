@@ -101,9 +101,6 @@ def sync_exports(logger, settings, sc_client):
                     loop_through_chunks(chunk, logger, settings, sc_client, export_count, export_total, get_started)
                 if get_started not in ['csv', 'ignored']:
                     end_session(get_started[1])
-                    # chunks_to_process = sc_client.raise_pool(list_of_audits['audits'], logger)
-                # elif export_format in ['pickle']:
-                #     get_started = ['complete', 'complete']
             else:
                 for audit in audits_to_process:
                     logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
@@ -114,7 +111,6 @@ def sync_exports(logger, settings, sc_client):
 
 
 def loop_through_chunks(audits_to_process, logger, settings, sc_client, export_count, export_total, get_started):
-    print('chunks')
     audits_to_process = sc_client.raise_pool(audits_to_process, logger)
     for audit in audits_to_process:
         logger.info('Processing audit (' + str(export_count) + '/' + str(export_total) + ')')
@@ -135,7 +131,7 @@ def process_audit(logger, settings, sc_client, audit, get_started):
         return
     audit_id = audit['audit_id']
 
-    if get_started not in ['csv', 'ignored']:
+    if get_started not in ['ignored']:
         logger.info('importing ' + audit_id)
         audit_json = audit
     else:
@@ -149,7 +145,6 @@ def process_audit(logger, settings, sc_client, audit, get_started):
     for export_format in settings[EXPORT_FORMATS]:
         if export_format in ['pdf', 'docx']:
             export_audit_pdf_word(logger, sc_client, settings, audit_id, preference_id, export_format, export_filename)
-
         elif export_format == 'json':
             export_audit_json(logger, settings, audit_json, export_filename)
         elif export_format == 'csv':
